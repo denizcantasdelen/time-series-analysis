@@ -1,0 +1,856 @@
+---
+title: 'Final_Project_STAT497'
+author: Denizcan Taşdelen
+date: October 22, 2023
+output: 
+  html_document: 
+    highlight: zenburn
+    theme: readable
+---
+
+These data include information regarding `inflation` in Turkey between 2004 and 2021.
+Inflation data is only based on `The Consumer Price Index (CPI)` which is a measure of the average change in the prices over time  paid by urban consumers for a market basket of consumer goods and services.
+In brief, a higher CPI indicates higher inflation.
+
+```{r message=FALSE, warning=FALSE}
+library("readxl")
+#install.packages('forecast')
+library(forecast)
+library(stats)
+library(ggplot2)
+library(lattice)
+library(gridExtra)
+library(tseries)
+library(TSA)
+library(fUnitRoots)
+library(caschrono)
+library(pdR)
+library(uroot)
+library(fpp2)
+#install.packages('hrbrthemes')
+library(hrbrthemes)
+#install.packages('gcookbook')
+library(gcookbook)
+library(tidyverse)
+#install.packages('plotly', type='binary')
+library(plotly)
+########################
+library(tidyverse)
+#install.packages('tibbletime')
+library(tibbletime)
+library(anomalize)
+#install.packages('anomalize')
+#install.packages('tibbletime')
+#install.packages('timetk')
+library(timetk)
+library(Rcpp)
+library(wikipediatrend)
+########################
+library(timetk)
+library(tidyverse)
+library(tibbletime)
+library(anomalize)
+########################
+#install.packages('anomalize')
+########################
+#install.packages("devtools")
+#library(devtools)
+########################
+#install_github(devtools) 
+########################
+#install.packages("wikipediatrend")
+library(Rcpp)
+library(wikipediatrend)
+#install.packages("anomalize")
+#install.packages("AnomalyDetection")
+library(AnomalyDetection)
+library(FinTS)
+#install.packages("prophet")
+library(prophet)
+########################
+remotes::install_github('https://github.com/twitter/AnomalyDetection')
+```
+
+```{r message=FALSE, warning=FALSE}
+#data preparation
+data <- read_excel("inflation.xlsx")
+
+data1 <- data$Tarih
+new1 <- as.Date(paste(data1,"-01",sep=""))
+new1 <- data.frame(new1)
+
+data2 <- data$`TP FG J0-3`
+
+new2 <- data.frame(data2)
+
+raw_data <- cbind(new1, new2)
+
+colnames(raw_data) <- c('date', 'info')
+
+mydata <- cbind(new1, new2)
+
+colnames(mydata) <- c('date', 'info')
+
+mydata <- mydata$info
+
+my_new_data <- ts(mydata,start = 2004 , frequency = 12)
+
+ts_data<-ts(raw_data$info,start=2004, frequency = 12)
+```
+
+<span style="color:red">**TIME SERIES PLOT AND INTERPRETATION**</span>
+
+Time Series Plot shows that there is an increasing inflation especially throughout and after 2020 which is an indicator of existing trend. These points may also be indicators of strong outliers.
+
+Small inflation changes in time may also be indicating seasonality in the process.
+
+```{r message=FALSE, warning=FALSE}
+plot(ts_data, main='Time Series Plot of Inflation in Turkey', xlab='Time', ylab='Data')
+```
+
+<span style="color:red">**ANOMALY DETECTION**</span> 
+
+Firstly, we convert data to tibble class.
+
+```{r message=FALSE, warning=FALSE}
+raw_data <- raw_data
+
+df <- as_tibble(raw_data)
+class(df)
+```
+
+Below graphs indicate that most of the outliers clustered around 2018, 2019 and beginnig of 2020.
+
+Most of the anomalies gather around 2018 and 2019 where dramatical increase has been observed in inflation.
+
+```{r message=FALSE, warning=FALSE}
+df %>% 
+  time_decompose(info, method = "stl", frequency = "auto", trend = "auto") %>%
+  anomalize(remainder, method = "gesd", alpha = 0.02, max_anoms = 0.2) %>%
+  plot_anomaly_decomposition()
+```
+
+More detailed anomaly points can be seen in below graph by SH-ESD (Seasonal Hybrid ESD).
+
+```{r message=FALSE, warning=FALSE}
+a <- df %>% 
+  time_decompose(info) %>%
+  anomalize(remainder) %>%
+  time_recompose() %>%
+  filter(anomaly == 'Yes')
+
+AnomalyDetectionHiggins = AnomalyDetectionVec(raw_data$info, period=12, direction="pos", plot=TRUE, title = "Anomaly Detection")
+AnomalyDetectionHiggins$plot
+```
+
+using tsclean function, anomalies was removed and replaced with interpolated values.
+
+Time series plot after replacing anomalies with interpolated values can be seen from graph located below.
+
+```{r message=FALSE, warning=FALSE}
+plot(tsclean(ts_data), main="Time Series Plot After and Before Extracting the Anomalous Data Points", col='red')
+lines(ts_data, col='black') #original dataset.
+grid()
+```
+
+<span style="color:red">**Cross-Validation**</span> 
+
+We keep last 12 observations out of the analysis since our data consists of monthly observations.
+
+Train and Test sets can be seen below.
+
+```{r message=FALSE, warning=FALSE}
+ts_data <- tsclean(ts_data)
+train_for_arıma <- window(ts_data, end=c(2020,11))
+train_for_arıma
+test_for_arıma  <- window(ts_data, start=c(2020, 12))
+test_for_arıma
+```
+
+<span style="color:red">**BOX-COX TRANSFORMATION**</span> 
+
+Variance seems to be low.
+
+```{r message=FALSE, warning=FALSE}
+sd(train_for_arıma)
+```
+
+We apply BoxCox transformation on the train data set.
+
+```{r}
+lambda <- BoxCox.lambda(train_for_arıma)
+
+train_for_arıma <- BoxCox(train_for_arıma, lambda)
+#transformed_data <- log(ts_data)  #log transformation alınca fit4'te Arima(train, order = c(0, 1, 1), seasonal = c(0, 0, 1)) significant çıkıyo.
+```
+
+It can be seen by the below graph that we catched the stability in variance.
+
+```{r message=FALSE, warning=FALSE}
+autoplot(train_for_arıma, main='TS Plot After Applying Variance Stabilization Transformation') + theme_bw()
+
+#DO WE APPLY TRANSFORMATION AFTER OR BEFORE DIAGNOSTIC CHECK????????????
+#raw_data <- raw_data[1:203, ]
+#raw_data$info <-BoxCox(raw_data$info, lambda)
+#tail(train_for_arıma)
+```
+
+ACF and PACF plots shows that there is slow decay in ACF indicating nonstationary process.
+
+We cannot comment on PACF.
+
+```{r message=FALSE, warning=FALSE}
+
+tt3 <- ggAcf(train_for_arıma, lag.max = 60, main='ACF and PACF Plots of Data Set') + theme_bw()
+tt4 <- ggPacf(train_for_arıma, main='', lag.max = 60) + theme_bw()
+grid.arrange(tt3, tt4, nrow=1)
+```
+
+<span style="color:red">**KPSS, PP, ADF, HEGY AND CANOVA-HENSEN TESTS**</span> 
+
+KPSS Test indicates that we have a nonstationary process. (p-value < 0.05)
+
+```{r message=FALSE, warning=FALSE}
+#non stat
+kpss.test(train_for_arıma, null=c('Level'))
+```
+
+KPSS with trend indicates stochastic trend. (p-value < 0.05)
+
+```{r message=FALSE, warning=FALSE}
+#stochastic
+kpss.test(train_for_arıma, null=c('Trend'))
+```
+
+PP Test yields result as stationary. (p-value < 0.05)
+
+```{r message=FALSE, warning=FALSE}
+#stat
+pp.test(train_for_arıma)
+```
+
+Below code chunk shows that mean is different than zero. (type = 'c' in below ADF test)
+
+```{r message=FALSE, warning=FALSE}
+mean(train_for_arıma)
+```
+
+Also, PACF cuts off after lag 2. (lags = 2 in below ADF test)
+
+ADF test gives result as stationary. 
+
+So, we do not apply ADF test with 'ct'.
+
+```{r message=FALSE, warning=FALSE}
+adfTest(train_for_arıma, lags = 2, type = 'c')
+```
+
+canova-hensen test for seasonal unit root
+
+#H0 : The series is purely deterministic and stationary.
+
+#H1 : We have stochastic seasonality.
+
+#Since p value (0.6292) is greater α , we fail to reject H0. The seasonal pattern is purely deterministic and stationary.
+
+```{r message=FALSE, warning=FALSE}
+library(uroot)
+ch.test(train_for_arıma, type = "dummy",sid=c(1:12)) #since we have monthly data, we use sid=c(1:12)
+```
+
+Below HEGY test yields that there is regular unit root problem in the data.
+
+```{r message=FALSE, warning=FALSE}
+#regular unit root
+HEGY.test(wts = train_for_arıma, itsd = c(1, 1, 0), regvar = 0, selectlags = list(mode = 'signf', Pmax=NULL))$stats
+```
+
+Canova-Hensen, PP and ADF tests give result as stationary.
+
+But, there is slow decay in ACF and also HEGY test indicate regular unit root problem.
+
+KPSS test shows that have a nonstationary series with stochastic trend.  
+
+Hence, we continue to the analysis as we have a nonstationary process.
+
+
+<span style="color:red">**Removing Trend From Stochastic Trend by Taking Differencing**</span> 
+
+Below graph shows after taking first regular differencing, 
+
+```{r message=FALSE, warning=FALSE}
+differenced_data <- diff(train_for_arıma)
+autoplot(differenced_data, main="TS Plot of Differenced Series") + theme_bw()
+```
+
+KPSS test indicates stationary process. (p-value > 0.05)
+
+```{r message=FALSE, warning=FALSE}
+#stat
+kpss.test(differenced_data, null=c('Level'))
+```
+
+Mean is around zero. (type = 'nc')
+
+```{r message=FALSE, warning=FALSE}
+mean(differenced_data)
+```
+
+ADF test indicates stationary process. (p-value < 0.05)
+
+```{r message=FALSE, warning=FALSE}
+#stat
+adfTest(differenced_data, type = 'nc')
+```
+
+PP test indicates stationary process. (p-value < 0.05)
+
+```{r message=FALSE, warning=FALSE}
+#stat
+pp.test(differenced_data)
+```
+
+HEGY test indicates that after taking first regular differencing, unit root problem disappears.
+
+```{r message=FALSE, warning=FALSE}
+#unit root disappears
+HEGY.test(wts = differenced_data, itsd = c(0, 0, 0), regvar = 0, selectlags = list(mode = 'signf', Pmax=NULL))$stats
+```
+
+<span style="color:red">**IDENTIFYING A PROPER ARIMA/SARIMA MODEL**</span> 
+
+ACF, PACF plots after taking regular differencing:
+
+```{r message=FALSE, warning=FALSE}
+
+p3 <- ggAcf(differenced_data, lag.max = 50, main='ACF of The Differenced Data') + theme_bw()
+p4 <- ggPacf(differenced_data, lag.max = 50, main='PACF of The Differenced Data') + theme_bw()
+grid.arrange(p3, p4, nrow=1)
+```
+
+Cosidering significant lags, we can suggest below models to the data:
+
+`suggest_1: SARIMA(4, 1, 4)(2, 0, 1)12`
+
+`suggest_2: SARIMA(1, 1, 1)(2, 0, 1)12`
+
+`suggest_3: SARIMA(4, 1, 1)(2, 0, 1)12`
+
+`suggest_4: SARIMA(1, 1, 4)(2, 0, 1)12`
+
+<span style="color:red">**ESTIMATING THE PARAMETERS**</span> 
+
+<span style="color:red">**1) Nonsignificant model:**</span> 
+
+There are many NaN which hinder making estimation.
+
+```{r message=FALSE, warning=FALSE}
+
+fit1<-Arima(train_for_arıma, order = c(4,1 ,4), seasonal = c(2, 0, 1))
+fit1
+```
+
+<span style="color:red">**2) Nonsignificant model:**</span> 
+
+ar4, ma4, sma1 are significant.
+
+sar1 is nonsignificant.
+
+```{r message=FALSE, warning=FALSE}
+
+fitd1<-Arima(train_for_arıma, order = c(4,1 ,4), seasonal = c(1, 0, 1))
+fitd1
+```
+
+<span style="color:red">**3) Significant model:**</span> 
+
+ar4, ma4, sma1 are significant.
+
+```{r message=FALSE, warning=FALSE}
+significant1<-Arima(train_for_arıma, order = c(4,1 ,4), seasonal = c(0, 0, 1))
+significant1
+```
+
+<span style="color:red">**4) Nonsignificant model:**</span> 
+
+ar2, ma1, sma1 are significant.
+
+```{r message=FALSE, warning=FALSE}
+significant2<-Arima(train_for_arıma, order = c(2,1 ,1), seasonal = c(0, 0, 1))
+significant2
+```
+
+<span style="color:red">**5) Significant model:**</span> 
+
+ar1, ma1, sma1 are significant.
+
+```{r message=FALSE, warning=FALSE}
+significant3<-Arima(train_for_arıma, order = c(1,1 ,1), seasonal = c(0, 0, 1))
+significant3
+```
+
+<span style="color:red">**6) Nonsignificant model:**</span> 
+
+ma4, sma1 are significant.
+
+ar4, sar1 are nonsignificant.
+
+```{r message=FALSE, warning=FALSE}
+fit2<-Arima(train_for_arıma ,order = c(4, 1, 4), seasonal = c(1, 0, 1))
+fit2
+```
+
+Among significant models 3 and 5, model 5 has the lowest BIC value as -503.85.
+
+Hence, we can choose model 5, (SARIMA(1,1,1)(0,0,1)[12]), as the best one.
+
+```{r message=FALSE, warning=FALSE}
+#I used fit4 in the upcoming code chunks as the name. So, I changed of the name of the significant model as fit4.
+fit4<-significant3
+```
+
+<span style="color:red">**DIAGNISTIC CHECKING**</span> 
+
+<span style="color:red">**Evaluating Residuals**</span> 
+
+Below ACF, PACF plot of the residuls show that most of the lags are inside the White Noise bands.
+
+```{r message=FALSE, warning=FALSE}
+r <- resid(fit4)
+
+autoplot(r)+geom_line(y=0)+theme_bw()+ggtitle("Plot of The Residuals") + 
+  labs(x = "Time", y = "Residuals") 
+
+k3 <- ggAcf(r, main='ACF') + theme_bw()
+k4 <- ggPacf(r, main='PACF') + theme_bw()
+grid.arrange(k3, k4, nrow=1)
+```
+
+Below QQ Plot shows that most of the residuals of the model lie on 45 degree straight line indicating that residuals are normally distributed.
+
+```{r message=FALSE, warning=FALSE}
+ggplot(r, aes(sample = r)) +stat_qq()+geom_qq_line()+ggtitle("QQ Plot of the Residuals")+theme_bw()
+```
+
+The following histogram is the histogram of the residuals with normal curve.
+
+Histogram of the resiudals shows that they might have a symmetric distribution.
+
+```{r message=FALSE, warning=FALSE}
+ggplot(r,aes(x=r))+geom_histogram(bins=20)+geom_density()+ggtitle("Histogram of Residuals")+theme_bw()
+```
+
+<span style="color:red">**Formal Normality Tests (Jarque Bera and Shapiro-Wilk test)**</span> 
+
+For both tests, the following hypothesis are used:
+
+Ho: Residuals have normal distribution.
+
+H1: Residuals don’t have normal distribution.
+
+Both of the tests indicate that residuals are not normally distributed. (p-values < 0.05)
+```{r message=FALSE, warning=FALSE}
+jarque.bera.test(r)
+```
+
+```{r message=FALSE, warning=FALSE}
+shapiro.test(r)
+```
+
+<span style="color:red">**Testing Serial Correlation in Residuals**</span> 
+
+In the ACF, almost all spikes are in the WN band which shows that there is no serial correlation in the residuals.
+
+```{r message=FALSE, warning=FALSE}
+ggAcf(as.vector(r),main="ACF of the Residuals",lag = 48)+theme_minimal() 
+```
+
+To be sure, let us apply formal tests:
+
+#There are three tests used for detecting serial correlation among residuals.
+#For all tests, we have the following hypothesis.
+
+#H0: there is no serial correlation of any order up to p p1=....=pp=0
+
+#H1: there is a serial correlation up to p / ρi≠0
+
+<span style="color:red">**Breusch-Godfrey Test**</span> 
+
+Since p value is greater than alpha, we have 95% confident that the residuals of the model are uncorrelated, according to results of Breusch-Godfrey Test.
+
+```{r message=FALSE, warning=FALSE}
+m <- lm(r ~ 1+zlag(r))
+library(lmtest)
+bgtest(m,order=12)
+```
+
+<span style="color:red">**Box-Ljung Test**</span> 
+
+Since p value is greater than alpha, residuals of the model are `uncorrelated` according to results of `Box-Ljung Test`.
+
+```{r message=FALSE, warning=FALSE}
+Box.test(r,lag=12,type = c("Ljung-Box")) 
+```
+
+<span style="color:red">**Box-Pierce Test**</span>
+
+Since p value is greater than alpha, residuals of the model are `uncorrelated` according to results of `Box-Pierce Test`.
+
+```{r message=FALSE, warning=FALSE}
+Box.test(r,lag=12,type = c("Box-Pierce")) 
+```
+
+<span style="color:red">**HETEROSCEDASTICITY TESTS**</span> 
+
+Most of the spikes are in the white noise band in both plots, So, it can be said that there is no heteroscedasticity problem.
+
+```{r message=FALSE, warning=FALSE}
+rr=r^2
+g1<-ggAcf(as.vector(rr))+theme_minimal()+ggtitle("ACF of Squared Residuals")
+g2<-ggPacf(as.vector(rr))+theme_minimal()+ggtitle("PACF of Squared Residuals") 
+grid.arrange(g1,g2,ncol=2)
+```
+
+Since ARCH Engle's Test yields p-value > 0.05, it can be concluded that there is no Heteroscedasticity problem.
+
+```{r message=FALSE, warning=FALSE}
+ArchTest(r)
+```
+
+<span style="color:red">**Breusch-Pagan Test For Heteroscedasticity**</span> 
+
+H0: Residuals are homoscedastic. (The variance is constant.)
+
+H1: Residuals are heteroscedastic. (The variance is changing over time.)
+
+Since p value is greater than alpha, we fail reject Ho. Therefore, we can say that we have enough evidence to claim that there is no heteroscedasticity problem, according to results of Breusch-Pagan test.
+
+```{r message=FALSE, warning=FALSE}
+library(lmtest)
+m = lm(r ~ train_for_arıma+zlag(train_for_arıma)+zlag(train_for_arıma,1))
+bptest(m)
+```
+
+<span style="color:red">**FORECASTING**</span> 
+
+<span style="color:red">**a. Forecasting With SARIMA **</span> 
+
+As it is seen, although fitted line is suitable for most of the points in the train set, SARIMA model fails to catch the last increase in inflation. It can be concluded that the SARIMA model is prone to follow mean of the process and the prediction line folds towards the midpoint of the graph.    
+
+```{r message=FALSE, warning=FALSE}
+f<-forecast(fit4, h=12)
+autoplot(f)+theme_bw()+ggtitle("Forecast of SARIMA")
+```
+
+<span style="color:red">**Checking The Performance of The SARIMA Model**</span> 
+
+To check the performance of the SARIMA model, we firstly apply Back-Transformation to the data that we applied logarithmic transformation.
+
+```{r message=FALSE, warning=FALSE}
+f_t<-exp(f$mean)
+accuracy(f_t, test_for_arıma)
+```
+
+<span style="color:red">**b. Forecasting With ETS **</span> 
+
+TBATS, PROPHET, NNETAR and ETS require NOT transformed data.
+
+Below sets are train and test sets that are NOT transformed.
+
+```{r message=FALSE, warning=FALSE}
+train <- window(ts_data, end=c(2020,11))
+test  <- window(ts_data, start=c(2020, 12))
+```
+
+Below graphs show forecasts done by some of the best fitted models by ETS.
+
+Forecast done by ETS model does not differ too much from that of SARIMA model. Fitted line is appropriate for the train data, but the last increase could not catched by ETS, too. 
+
+```{r}
+fit1 <- ets(train, model = "ZZZ")
+ets1 <- forecast(fit1, h = 12)
+fit2 <- ets(train, model = "MMM")
+ets2 <- forecast(fit2, h = 12)
+fit3 <- ets(train, model = "MAM") 
+ets3 <- forecast(fit3, h = 12)
+best_ets <- ets(train, model = "AAN")#======>>>> BEST ETS model
+ets4 <- forecast(best_ets, h = 12)
+a1 <- autoplot(ets1)+autolayer(test,series="actual",color="red")+autolayer(fitted(ets1), series="Fitted")+theme_minimal()
+a2 <- autoplot(ets2)+autolayer(test,series="actual",color="red")+autolayer(fitted(ets2), series="Fitted")+theme_minimal()
+a3 <- autoplot(ets3)+autolayer(test,series="actual",color="red")+autolayer(fitted(ets3), series="Fitted")+theme_minimal()
+a4 <- autoplot(ets4)+autolayer(test,series="actual",color="red")+autolayer(fitted(ets4), series="Fitted")+theme_minimal()
+grid.arrange(a1, a2, a3, a4, nrow=2)
+```
+
+The best exponential smoothing model using ets function can be seen below:
+
+It is seen that we have exponential smoothing model having `additive error` and `additive trend`. 
+
+```{r message=FALSE, warning=FALSE}
+best_ets
+```
+
+<span style="color:red">**Checking The Performance of The ETS Model**</span>
+
+According to below table, since RMSE value is the smallest one among all models for the model = "AAN", we can choose it as a best forecast model done by ETS.
+
+```{r message=FALSE, warning=FALSE}
+rmse_ets_train_1 <- accuracy(ets1, test)[1, 2]  #RMSE FOR TRAİN
+rmse_ets_train_2 <- accuracy(ets2, test)[1, 2]  #RMSE FOR TRAİN
+rmse_ets_train_3 <- accuracy(ets3, test)[1, 2]  #RMSE FOR TRAİN
+rmse_ets_train_4 <- accuracy(ets4, test)[1, 2]  #RMSE FOR TRAİN
+
+rmse_ets_test_1 <- accuracy(ets1, test)[2, 2]  #RMSE FOR TEST
+rmse_ets_test_2 <- accuracy(ets2, test)[2, 2]  #RMSE FOR TEST
+rmse_ets_test_3 <- accuracy(ets3, test)[2, 2]  #RMSE FOR TEST
+rmse_ets_test_4 <- accuracy(ets4, test)[2, 2]  #RMSE FOR TEST
+
+#ets with 'AAN' seems to be the best choice since it has the lowest RMSE values for train and test.
+matrix(c(rmse_ets_train_1, rmse_ets_test_1, 
+         rmse_ets_train_2, rmse_ets_test_2, 
+         rmse_ets_train_3, rmse_ets_test_3, 
+         rmse_ets_train_4, rmse_ets_test_4), nrow=2, ncol=4, 
+       dimnames = list(c('rmse_train', 'rmse_test'), c('MNM', 'MMM', 'MAM', 'AAN')))
+```
+
+<span style="color:red">**Checking The Normality of Residuals For ETS**</span>
+
+As it is seen, residuals do not follow normal distribution for ETS.
+
+```{r message=FALSE, warning=FALSE}
+shapiro.test(resid(best_ets))
+```
+
+<span style="color:red">**c. Forecasting With PROPHET**</span>
+
+```{r message=FALSE, warning=FALSE}
+ds<-c(seq(as.Date("2004/01/01"),as.Date("2020/11/01"),by="month"))
+df<-data.frame(ds,y=as.numeric(train))
+
+my_prophet <- prophet(df)
+future<-make_future_dataframe(my_prophet, periods = 12, freq='month') #periods 12, since it's a monthly series.
+
+forecast <- predict(my_prophet, future)
+
+tail(forecast[c('ds', 'yhat', 'yhat_lower', 'yhat_upper')],12)
+
+library(dygraphs)
+dyplot.prophet(my_prophet, forecast)
+```
+
+<span style="color:red">**Checking The Performance of The PROPHET Model**</span>
+
+```{r message=FALSE, warning=FALSE}
+accuracy(tail(forecast$yhat, 12), test)
+```
+
+<span style="color:red">**d. Forecasting With TBATS**</span> 
+
+First outstanding observation from TBATS model is that fitted line is getting worse for suiting to the train data. It deviates from the train set on most of the points. In addition to that observation, prediction line bends below, moving away from the test data. 
+
+```{r message=FALSE, warning=FALSE}
+tbatsmodel<-tbats(train)
+
+tbats_forecast<-forecast(tbatsmodel, h = 12)
+
+autoplot(train,main="TS plot of Train with TBATS: Fitted Line and Forecast") +
+  autolayer(fitted(tbatsmodel), series="Fitted", color='red')+
+  autolayer(tbats_forecast,series="actual",color="blue")+
+  autolayer(test,series="actual",color="red") + 
+  scale_color_manual(labels = c("fitted line", "test"), values = c(3, 2)) +
+  theme_bw()
+
+```
+
+Summary of TBATS model is located below:
+
+```{r message=FALSE, warning=FALSE}
+tbatsmodel
+```
+
+<span style="color:red">**Checking The Performance of The TBATS Model**</span>
+
+```{r message=FALSE, warning=FALSE}
+accuracy(tbats_forecast,test)
+```
+
+<span style="color:red">**Checking The Normality of Residuals For TBATS**</span>
+
+As it is seen, residuals do not follow normal distribution for TBATS.
+
+```{r message=FALSE, warning=FALSE}
+shapiro.test(resid(tbatsmodel))
+```
+
+<span style="color:red">**e. Forecasting With NNETAR**</span> 
+
+NNETAR seems to be yielding the best fitted line to the train data. It catches most of the real data points. Also, the last increase in the inflation is catched by the model, with some deviation. Nevertheless, as it is shown by the before accuracy tables, the best forecast is done by Neural Network. 
+
+```{r message=FALSE, warning=FALSE}
+nnmodel<-nnetar(train)
+
+nnforecast<-forecast(nnmodel,h=12,PI=TRUE)
+
+autoplot(train,main="TS plot of Train with TBATS: Fitted Line and Forecast") +
+  autolayer(fitted(nnmodel), series="Fitted", color='red')+
+  autolayer(nnforecast,series="actual",color="blue")+
+  autolayer(test,series="actual",color="red") + 
+  scale_color_manual(labels = c("fitted line", "test"), values = c(3, 2)) +
+  theme_bw()
+```
+
+Summary of NNETAR model is located below:
+
+```{r message=FALSE, warning=FALSE}
+nnmodel
+```
+
+<span style="color:red">**Checking The Performance of The NNETAR Model**</span>
+
+```{r message=FALSE, warning=FALSE}
+accuracy(nnforecast,test)
+```
+
+<span style="color:red">**Checking The Normality of Residuals For NNETAR**</span>
+
+As it is seen, residuals follow normal distribution for NNETAR.
+
+```{r message=FALSE, warning=FALSE}
+shapiro.test(resid(nnforecast))
+```
+
+<span style="color:red">**Comparing The Performance of All Models**</span>
+
+Below is `train accuracy`:
+
+```{r message=FALSE, warning=FALSE}
+#train
+ac_train_nn <- accuracy(nnforecast,test)[1, 1:5]
+ac_train_tbats <- accuracy(tbats_forecast,test)[1, 1:5]
+ac_train_ets <- accuracy(ets4, test)[1, 1:5]
+ac_train_prophet <- accuracy(tail(forecast$yhat, 203), train)[1, 1:5]
+
+ac_train_nn <- as.data.frame(ac_train_nn)
+ac_train_tbats <- as.data.frame(ac_train_tbats)
+ac_train_ets <- as.data.frame(ac_train_ets)
+ac_train_prophet <- as.data.frame(ac_train_prophet)
+
+acf_nn <- accuracy(nnforecast,test)[1, 7]
+acf_tbats <- accuracy(tbats_forecast,test)[1, 7]
+acf_ets <- accuracy(ets4, test)[1, 7]
+acf_prophet <- accuracy(tail(forecast$yhat, 203), train)[1, 6]
+
+acf_nn <- as.data.frame(acf_nn)
+acf_tbats <- as.data.frame(acf_tbats)
+acf_ets <- as.data.frame(acf_ets)
+acf_prophet <- as.data.frame(acf_prophet)
+
+acfss_trains <- cbind(acf_nn, acf_tbats, acf_ets, acf_prophet)
+
+colnames(acfss_trains) <- c('ac_train_nn', 'ac_train_tbats', 'ac_train_ets', 'ac_train_prophet')
+
+#train accuracy
+acfs_train <- cbind(ac_train_nn, ac_train_tbats, ac_train_ets, ac_train_prophet)
+
+train_accuracy_last <- rbind(acfs_train, acfss_trains)
+
+rownames(train_accuracy_last) <- c('ME', 'RMSE', 'MAE', 'MPE', 'MAPE', 'ACF1')
+
+colnames(train_accuracy_last) <- c('NNETAR', 'TBATS', 'ETS', 'PROPHET')
+
+train_accuracy_last['SARIMA'] <- NA
+
+train_accuracy_last
+```
+
+Below is `test accuracy`:
+
+```{r message=FALSE, warning=FALSE}
+#test
+ac_test_nn <- accuracy(nnforecast,test)[2, 1:5]
+ac_test_tbats <- accuracy(tbats_forecast,test)[2, 1:5]
+ac_test_ets <- accuracy(ets4, test)[2, 1:5]
+ac_test_prophet <- accuracy(tail(forecast$yhat, 12), test)[1, 1:5]
+
+ac_test_nn <- as.data.frame(ac_test_nn)
+ac_test_tbats <- as.data.frame(ac_test_tbats)
+ac_test_ets <- as.data.frame(ac_test_ets)
+ac_test_prophet <- as.data.frame(ac_test_prophet)
+
+acf_nn_test <- accuracy(nnforecast,test)[2, 7]
+acf_tbats_test <- accuracy(tbats_forecast,test)[2, 7]
+acf_ets_test <- accuracy(ets4, test)[2, 7]
+acf_prophet_test <- accuracy(tail(forecast$yhat, 12), test)[1, 6]
+
+acf_nn_test <- as.data.frame(acf_nn_test)
+acf_tbats_test <- as.data.frame(acf_tbats_test)
+acf_ets_test <- as.data.frame(acf_ets_test)
+acf_prophet_test <- as.data.frame(acf_prophet_test)
+
+acfss_tests <- cbind(acf_nn_test, acf_tbats_test, acf_ets_test, acf_prophet_test)
+
+colnames(acfss_tests) <- c('ac_test_nn', 'ac_test_tbats', 'ac_test_ets', 'ac_test_prophet')
+
+#test accuracy
+acfs_test <- cbind(ac_test_nn, ac_test_tbats, ac_test_ets, ac_test_prophet)
+
+test_accuracy_last <- rbind(acfs_test, acfss_tests)
+
+rownames(test_accuracy_last) <- c('ME', 'RMSE', 'MAE', 'MPE', 'MAPE', 'ACF1')
+
+colnames(test_accuracy_last) <- c('NNETAR', 'TBATS', 'ETS', 'PROPHET')
+
+test_accuracy_last['SARIMA'] <- accuracy(f_t,test_for_arıma)[, 1:6]
+
+test_accuracy_last
+```
+
+<span style="color:red">**SUMMARY OF ALL FORECASTS**</span>
+
+Plots from different models can be seen below.
+
+<span style="color:red">**ARIMA**</span>
+
+```{r message=FALSE, warning=FALSE}
+#I don't know why but this code yields such an absurd graph when I knit. But I yield the graph in the word when I run this code in the normal script.
+autoplot(f) + 
+  ggtitle("Forecast of SARIMA") + 
+  autolayer(fitted(f), series="Fitted", color='red') + 
+  autolayer(test, series="actual",color="red") +
+  geom_vline(xintercept = 2020.9, color = "red", size=0.8) +
+  theme_bw()
+```
+
+<span style="color:red">**ETS**</span>
+
+```{r message=FALSE, warning=FALSE}
+a4 <- autoplot(ets4) + 
+      autolayer(fitted(ets4), series="Fitted") + 
+      autolayer(test,series="actual",color="red") +
+      geom_vline(xintercept = 2020.9, color = "red", size=0.8) +
+      theme_bw()
+a4
+```
+
+<span style="color:red">**TBATS**</span>
+
+```{r message=FALSE, warning=FALSE}
+autoplot(train,main="TS plot of Train with TBATS: Fitted Line and Forecast") +
+  autolayer(fitted(tbatsmodel), series="Fitted", color='red')+
+  autolayer(tbats_forecast,series="actual",color="blue")+
+  autolayer(test,series="actual",color="red") + 
+  geom_vline(xintercept = 2020.9, color = "red", size=0.8) +
+  theme_bw()
+```
+
+<span style="color:red">**NNETAR**</span>
+
+```{r message=FALSE, warning=FALSE}
+autoplot(train,main="TS plot of Train with NNETAR: Fitted Line and Forecast") +
+  autolayer(fitted(nnmodel), series="Fitted", color='red')+
+  autolayer(nnforecast,series="actual",color="blue")+
+  autolayer(test,series="actual",color="red") + 
+  geom_vline(xintercept = 2020.9, color = "red", size=0.8) +
+  theme_bw()
+```
+
